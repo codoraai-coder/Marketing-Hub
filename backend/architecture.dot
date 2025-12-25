@@ -1,0 +1,95 @@
+digraph MCP_Architecture {
+  rankdir=TB;
+  node [shape=box, style=rounded];
+  
+  // Frontend
+  Frontend [label="Frontend\n(React/Vue/etc)", shape=box, style="rounded,filled", fillcolor=lightblue];
+  
+  // API Layer
+  subgraph cluster_api {
+    label="API Layer";
+    style=filled;
+    color=lightgrey;
+    
+    WorkspaceAPI [label="Workspace\nAPIs"];
+    ContentAPI [label="Content\nAPIs"];
+    WorkflowAPI [label="Workflow\nAPIs"];
+    JobAPI [label="Job\nAPIs"];
+  }
+  
+  // MCP Core
+  subgraph cluster_mcp {
+    label="Master Control Program (MCP)";
+    style=filled;
+    color=gold;
+    
+    ToolRegistry [label="Tool Registry", style="rounded,filled", fillcolor=yellow];
+    ExecutionEngine [label="Execution Engine", style="rounded,filled", fillcolor=yellow];
+    StateManager [label="State Manager", style="rounded,filled", fillcolor=yellow];
+    WorkflowLoader [label="Workflow Loader", style="rounded,filled", fillcolor=yellow];
+  }
+  
+  // Tools
+  subgraph cluster_tools {
+    label="Tools (Existing Models)";
+    style=filled;
+    color=lightgreen;
+    
+    BlogTool [label="generate_blog"];
+    ImageTool [label="generate_image"];
+    FutureTool [label="future tools...", style=dashed];
+  }
+  
+  // Execution Layer
+  subgraph cluster_execution {
+    label="Execution Layer";
+    style=filled;
+    color=lightyellow;
+    
+    JobQueue [label="Job Queue\n(Redis)"];
+    Workers [label="Workers"];
+  }
+  
+  // Infrastructure
+  subgraph cluster_infra {
+    label="Infrastructure";
+    style=filled;
+    color=lightpink;
+    
+    PostgreSQL [label="PostgreSQL\n(metadata, state)"];
+    Redis [label="Redis\n(jobs, cache)"];
+    S3 [label="S3\n(files, images)"];
+  }
+  
+  // Connections
+  Frontend -> WorkspaceAPI [label="HTTP"];
+  Frontend -> ContentAPI [label="HTTP"];
+  Frontend -> WorkflowAPI [label="POST /workflows/:id/run"];
+  Frontend -> JobAPI [label="GET /jobs/:id"];
+  
+  WorkspaceAPI -> PostgreSQL;
+  ContentAPI -> PostgreSQL;
+  WorkflowAPI -> ExecutionEngine [label="trigger"];
+  JobAPI -> PostgreSQL;
+  
+  ExecutionEngine -> WorkflowLoader [label="load workflow"];
+  ExecutionEngine -> ToolRegistry [label="execute tools"];
+  ExecutionEngine -> StateManager [label="store state"];
+  ExecutionEngine -> PostgreSQL [label="save logs"];
+  
+  ToolRegistry -> BlogTool;
+  ToolRegistry -> ImageTool;
+  ToolRegistry -> FutureTool;
+  
+  BlogTool -> S3 [label="store content"];
+  ImageTool -> S3 [label="store images"];
+  BlogTool -> PostgreSQL [label="create Content record"];
+  ImageTool -> PostgreSQL [label="create Content record"];
+  
+  ExecutionEngine -> JobQueue [label="future: async"];
+  JobQueue -> Workers;
+  Workers -> ExecutionEngine;
+  
+  // Legend
+  {rank=same; Frontend; PostgreSQL;}
+}
