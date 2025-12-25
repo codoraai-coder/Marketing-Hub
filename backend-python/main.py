@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import os
 from dotenv import load_dotenv
 
-from app.database import engine, Base
+from app.database import supabase
 from app.routers import workspace, content, workflow, job
 
 # Load environment variables
@@ -15,9 +15,7 @@ load_dotenv()
 async def lifespan(app: FastAPI):
     # Startup
     print("🚀 MCP Hub Backend starting...")
-    # Create database tables
-    Base.metadata.create_all(bind=engine)
-    print("✅ Database tables created")
+    print(f"✅ Connected to Supabase: {os.getenv('SUPABASE_URL')}")
     yield
     # Shutdown
     print("👋 MCP Hub Backend shutting down...")
