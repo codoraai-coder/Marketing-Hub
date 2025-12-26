@@ -62,12 +62,20 @@ class JobRunner:
                 return
             
             step_results = []
+            last_content_id = None  # Track content_id from previous step
             
             for step_index, step in enumerate(steps):
                 current_step = step_index + 1
                 step_name = step.get("name", f"Step {current_step}")
                 tool_name = step.get("tool_name")
-                config = step.get("config", {})
+                config = step.get("config", {}).copy()  # Copy to avoid mutating original
+                
+                # Inject context from previous steps if needed
+                # This allows steps like "Post to X" to get content_id from previous step
+                if last_content_id and "content_id" not in config:
+                    config["content_id"] = str(last_content_id)
+                if "workspace_id" not in config:
+                    config["workspace_id"] = workflow["workspace_id"]
                 
                 # Update current step - Starting
                 logger.info(f"Job {job_id}: Starting step {current_step}/{total_steps}: {step_name}")
@@ -99,6 +107,9 @@ class JobRunner:
                         tool_name=tool_name,
                         result=result
                     )
+                    
+                    # Track content_id for next step
+                    last_content_id = content_id
                     
                     # Log success
                     logger.info(f"Job {job_id}: Completed step {current_step}/{total_steps}: {step_name}, content_id: {content_id}")
@@ -175,7 +186,7 @@ class JobRunner:
     
     async def _save_content(self, workspace_id: str, job_id: str, 
                            workflow_step_id: str, tool_name: str, 
-                           result: Dict[str, Any]) -> str:
+                           result: Dict[str, Any], auto_approve: bool = True) -> str:
         """
         Save tool output as content in the database
         
@@ -184,6 +195,10 @@ class JobRunner:
         - Reused across workflows
         - Attached to analytics
         - Posted to social media
+        
+        Args:
+            auto_approve: If True, content is auto-approved for workflow automation.
+                         Set to False if manual review is required.
         """
         # Map tool names to content types
         tool_to_content_type = {
@@ -199,12 +214,22 @@ class JobRunner:
             logger.warning(f"Unknown tool '{tool_name}', defaulting to OPTIMIZED_CONTENT")
             content_type = ContentType.OPTIMIZED_CONTENT
         
+        # Extract the actual content data from the tool result
+        # Tool results have structure: {"status": "success", "tool": "...", "result": {...}}
+        # We want to save just the inner "result" data
+        actual_data = result.get("result", result) if isinstance(result, dict) else result
+        
         # Extract title from result if available
         title = None
-        if "topic" in result:
+        if "topic" in actual_data:
+            title = actual_data["topic"]
+        elif "caption" in actual_data:
+            title = actual_data["caption"][:100]  # First 100 chars as title
+        elif "topic" in result:
             title = result["topic"]
-        elif "caption" in result:
-            title = result["caption"][:100]  # First 100 chars as title
+        
+        # Auto-approve for workflow automation, or draft for manual review
+        status = ContentStatus.APPROVED.value if auto_approve else ContentStatus.DRAFT.value
         
         # Create content record
         content_data = {
@@ -213,8 +238,8 @@ class JobRunner:
             "workflow_step_id": str(workflow_step_id),
             "content_type": content_type.value,
             "title": title,
-            "data": result,
-            "status": ContentStatus.DRAFT.value,
+            "data": actual_data,  # Save the inner result data, not the wrapper
+            "status": status,
             "created_at": datetime.utcnow().isoformat()
         }
         

@@ -408,6 +408,10 @@ Example format: #AI, #TechInnovation, #FutureOfWork"""
             content_data = content['data']
             content_type = content['content_type']
             
+            # Handle nested result structure (legacy data may have {"status": ..., "result": {...}})
+            if isinstance(content_data, dict) and 'result' in content_data and 'status' in content_data:
+                content_data = content_data.get('result', content_data)
+            
             # Build payload based on content type
             prepared_payload = {
                 "content_id": content_id,
@@ -425,8 +429,8 @@ Example format: #AI, #TechInnovation, #FutureOfWork"""
                 docx_url = content_data.get('docx_url', '')
                 prepared_payload['post_text'] = f"📝 {title}\n\nRead the full article: {docx_url}"
             else:
-                # Generic fallback
-                prepared_payload['post_text'] = str(content_data.get('text', content_data.get('content', '')))
+                # Generic fallback - try multiple keys
+                prepared_payload['post_text'] = str(content_data.get('caption', content_data.get('text', content_data.get('content', ''))))
             
             # Add hashtags if available
             if content_type == 'hashtags':
