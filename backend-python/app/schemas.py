@@ -12,7 +12,7 @@ class JobStatus(str, Enum):
 
 
 class SocialPlatform(str, Enum):
-    LINKEDIN = "linkedin"
+    X = "x"  # X (formerly Twitter)
 
 
 class ContentType(str, Enum):
@@ -28,6 +28,13 @@ class ContentStatus(str, Enum):
     APPROVED = "approved"
     USED = "used"
     POSTED = "posted"
+
+
+class PostingStatus(str, Enum):
+    READY = "ready"
+    AWAITING_USER = "awaiting_user"
+    POSTED = "posted"
+    FAILED = "failed"
 
 
 # Workspace Schemas
@@ -253,3 +260,35 @@ class ContentResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+# Posting Job Schemas
+class CreatePostingJobDto(BaseModel):
+    """Schema for creating a posting job"""
+    workspace_id: UUID4
+    content_id: UUID4
+    platform: str
+    prepared_payload: Dict[str, Any]
+
+
+class UpdatePostingJobDto(BaseModel):
+    """Schema for updating a posting job"""
+    status: Optional[PostingStatus] = None
+    error_message: Optional[str] = None
+    posted_at: Optional[datetime] = None
+
+
+class PostingJobResponse(BaseModel):
+    """Schema for posting job in responses"""
+    id: UUID4
+    workspace_id: UUID4
+    content_id: UUID4
+    platform: str
+    status: PostingStatus
+    prepared_payload: Dict[str, Any]
+    error_message: Optional[str]
+    retry_count: int
+    created_at: datetime
+    posted_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True

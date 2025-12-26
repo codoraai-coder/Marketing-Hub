@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 
 from app.database import supabase
-from app.routers import workspace, workflow, job, generation, content
+from app.routers import workspace, workflow, job, generation, content, posting
 
 # Load environment variables
 load_dotenv()
@@ -43,6 +43,7 @@ app.include_router(workspace.router, prefix="/api/workspaces", tags=["workspaces
 app.include_router(workflow.router, prefix="/api/workflows", tags=["workflows"])
 app.include_router(job.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(content.router, prefix="/api/content", tags=["content"])
+app.include_router(posting.router)
 app.include_router(generation.router, prefix="/api/v1", tags=["generation"])
 
 

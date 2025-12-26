@@ -27,6 +27,13 @@ class ContentStatus(str, Enum):
     POSTED = "posted"
 
 
+class PostingStatus(str, Enum):
+    READY = "ready"
+    AWAITING_USER = "awaiting_user"
+    POSTED = "posted"
+    FAILED = "failed"
+
+
 # Table names (for Supabase queries)
 USERS_TABLE = "users"
 WORKSPACES_TABLE = "workspaces"
@@ -35,3 +42,4 @@ JOBS_TABLE = "jobs"
 SOCIAL_ACCOUNTS_TABLE = "social_accounts"
 ANALYTICS_TABLE = "analytics"
 CONTENT_TABLE = "content"
+POSTING_JOBS_TABLE = "posting_jobs"

@@ -20,12 +20,14 @@ from ..services.job_runner import JobRunner
 router = APIRouter()
 
 # Tool Registry - Available tools in the MCP system
+# Must match tools registered in services/tool_registry.py
 AVAILABLE_TOOLS = {
     "blog_generator",
     "image_generator",
     "caption_generator",
     "content_optimizer",
-    "hashtag_generator"
+    "hashtag_generator",
+    "post_to_x"  # X (Twitter) posting tool
 }
 
 
@@ -126,20 +128,35 @@ async def create_workflow(workflow: CreateWorkflowDto, supabase: Client = Depend
 
 @router.get("/", response_model=List[WorkflowListResponse])
 async def list_workflows(
-    workspace_id: UUID,
+    workspace_id: Optional[UUID] = None,
+    limit: int = 50,
+    offset: int = 0,
     supabase: Client = Depends(get_supabase)
 ):
     """
     List all workflows for a workspace
     Returns summary view without step details
     Includes last run information
+    
+    Query Parameters:
+    - workspace_id: Required - UUID of the workspace to filter by
+    - limit: Optional - Max number of results (default: 50)
+    - offset: Optional - Pagination offset (default: 0)
     """
-    # Get workflows
+    # Validate workspace_id is provided
+    if workspace_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="workspace_id query parameter is required. Example: GET /api/workflows/?workspace_id=<your-uuid>"
+        )
+    
+    # Get workflows with pagination
     workflows_result = supabase.table(WORKFLOWS_TABLE)\
         .select("*")\
         .eq("workspace_id", str(workspace_id))\
         .is_("deleted_at", "null")\
         .order("created_at", desc=True)\
+        .range(offset, offset + limit - 1)\
         .execute()
     
     workflows = []

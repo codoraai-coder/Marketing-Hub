@@ -35,6 +35,7 @@ class ToolRegistry:
             "caption_generator": self._execute_caption_generator,
             "content_optimizer": self._execute_content_optimizer,
             "hashtag_generator": self._execute_hashtag_generator,
+            "post_to_x": self._execute_post_to_x,
         }
         
         # Initialize Gemini client
@@ -333,6 +334,153 @@ Example format: #AI, #TechInnovation, #FutureOfWork"""
             
         except Exception as e:
             logger.error(f"Hashtag generation failed: {str(e)}")
+            raise
+    
+    async def _execute_post_to_x(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Prepare content for X (Twitter) posting (MCP tool - does NOT post directly)
+        
+        This tool:
+        1. Validates that content exists and is approved
+        2. Prepares the final posting payload
+        3. Creates a posting_job record with status='ready'
+        4. Returns the job_id and prepared payload
+        
+        It does NOT:
+        - Call X API
+        - Perform browser automation
+        - Schedule posts
+        
+        The user must manually post using the prepared payload.
+        """
+        logger.info(f"Preparing X post with config: {config}")
+        
+        try:
+            # Import database and models
+            from app.database import supabase
+            from app.models import CONTENT_TABLE, POSTING_JOBS_TABLE
+            
+            # Extract parameters
+            content_id = config.get('content_id')
+            workspace_id = config.get('workspace_id')
+            
+            if not content_id or not workspace_id:
+                raise ValueError("content_id and workspace_id are required")
+            
+            # STEP 1: Validate content exists and is approved
+            content_response = supabase.table(CONTENT_TABLE)\
+                .select("*")\
+                .eq("id", content_id)\
+                .eq("workspace_id", workspace_id)\
+                .is_("deleted_at", "null")\
+                .execute()
+            
+            if not content_response.data:
+                raise ValueError(f"Content {content_id} not found or deleted")
+            
+            content = content_response.data[0]
+            
+            if content['status'] != 'approved':
+                raise ValueError(f"Content must be approved before posting. Current status: {content['status']}")
+            
+            # STEP 2: Check if posting_job already exists for this content
+            existing_job_response = supabase.table(POSTING_JOBS_TABLE)\
+                .select("*")\
+                .eq("content_id", content_id)\
+                .execute()
+            
+            if existing_job_response.data:
+                existing_job = existing_job_response.data[0]
+                logger.info(f"Posting job already exists: {existing_job['id']}")
+                return {
+                    "status": "success",
+                    "tool": "post_to_x",
+                    "result": {
+                        "job_id": existing_job['id'],
+                        "content_id": content_id,
+                        "status": existing_job['status'],
+                        "prepared_payload": existing_job['prepared_payload'],
+                        "message": "Posting job already exists"
+                    }
+                }
+            
+            # STEP 3: Prepare final payload
+            content_data = content['data']
+            content_type = content['content_type']
+            
+            # Build payload based on content type
+            prepared_payload = {
+                "content_id": content_id,
+                "platform": "x",
+                "created_at": datetime.utcnow().isoformat()
+            }
+            
+            if content_type == 'caption':
+                prepared_payload['post_text'] = content_data.get('caption', '')
+            elif content_type == 'optimized_content':
+                prepared_payload['post_text'] = content_data.get('optimized', content_data.get('content', ''))
+            elif content_type == 'blog_post':
+                # For blog posts, create a teaser
+                title = content.get('title', 'New Blog Post')
+                docx_url = content_data.get('docx_url', '')
+                prepared_payload['post_text'] = f"📝 {title}\n\nRead the full article: {docx_url}"
+            else:
+                # Generic fallback
+                prepared_payload['post_text'] = str(content_data.get('text', content_data.get('content', '')))
+            
+            # Add hashtags if available
+            if content_type == 'hashtags':
+                prepared_payload['hashtags'] = content_data.get('hashtags', [])
+            
+            # Add image URL if available
+            if 'image_url' in content_data:
+                prepared_payload['image_url'] = content_data['image_url']
+            if 'cover_url' in content_data:
+                prepared_payload['image_url'] = content_data['cover_url']
+            
+            # X-specific formatting hints (280 char limit for tweets)
+            prepared_payload['formatting_hints'] = {
+                "max_length": 280,
+                "supports_markdown": False,
+                "supports_images": True,
+                "supports_videos": True
+            }
+            
+            # STEP 4: Create posting_job record
+            posting_job_data = {
+                "workspace_id": workspace_id,
+                "content_id": content_id,
+                "platform": "x",
+                "status": "ready",
+                "prepared_payload": prepared_payload,
+                "retry_count": 0
+            }
+            
+            job_response = supabase.table(POSTING_JOBS_TABLE)\
+                .insert(posting_job_data)\
+                .execute()
+            
+            if not job_response.data:
+                raise ValueError("Failed to create posting job")
+            
+            created_job = job_response.data[0]
+            logger.info(f"Created posting job: {created_job['id']}")
+            
+            # STEP 5: Return success response
+            return {
+                "status": "success",
+                "tool": "post_to_x",
+                "result": {
+                    "job_id": created_job['id'],
+                    "content_id": content_id,
+                    "status": "ready",
+                    "prepared_payload": prepared_payload,
+                    "message": "Content prepared for X posting. User must manually post."
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"X posting preparation failed: {str(e)}")
             raise
     
     def is_tool_available(self, tool_name: str) -> bool:
