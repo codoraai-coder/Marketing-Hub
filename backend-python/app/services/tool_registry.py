@@ -17,7 +17,7 @@ import tweepy
 logger = logging.getLogger(__name__)
 
 # External API base URL for image generation
-EXTERNAL_API_BASE_URL = "http://13.205.132.169:8000"
+EXTERNAL_API_BASE_URL = "http://13.205.132.169:8001"
 
 # Configure Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")

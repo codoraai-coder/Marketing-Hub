@@ -63,6 +63,7 @@ class JobRunner:
             
             step_results = []
             last_content_id = None  # Track content_id from previous step
+            last_result_data = None  # Track result data from previous step
             
             for step_index, step in enumerate(steps):
                 current_step = step_index + 1
@@ -76,6 +77,19 @@ class JobRunner:
                     config["content_id"] = str(last_content_id)
                 if "workspace_id" not in config:
                     config["workspace_id"] = workflow["workspace_id"]
+                
+                # Pass content/topic from previous step if not already set
+                # This enables hashtag generator, caption generator, etc. to use previous output
+                if last_result_data:
+                    if "content" not in config and "topic" not in config:
+                        if "caption" in last_result_data:
+                            config["content"] = last_result_data["caption"]
+                        elif "topic" in last_result_data:
+                            config["topic"] = last_result_data["topic"]
+                        elif "quote_text" in last_result_data:
+                            config["content"] = last_result_data["quote_text"]
+                        elif "optimized" in last_result_data:
+                            config["content"] = last_result_data["optimized"]
                 
                 # Update current step - Starting
                 logger.info(f"Job {job_id}: Starting step {current_step}/{total_steps}: {step_name}")
@@ -108,8 +122,9 @@ class JobRunner:
                         result=result
                     )
                     
-                    # Track content_id for next step
+                    # Track content_id and result data for next step
                     last_content_id = content_id
+                    last_result_data = result.get("result", result) if isinstance(result, dict) else result
                     
                     # Log success
                     logger.info(f"Job {job_id}: Completed step {current_step}/{total_steps}: {step_name}, content_id: {content_id}")
