@@ -81,15 +81,20 @@ class JobRunner:
                 # Pass content/topic from previous step if not already set
                 # This enables hashtag generator, caption generator, etc. to use previous output
                 if last_result_data:
-                    if "content" not in config and "topic" not in config:
+                    # Inject content if missing
+                    if "content" not in config:
                         if "caption" in last_result_data:
                             config["content"] = last_result_data["caption"]
-                        elif "topic" in last_result_data:
-                            config["topic"] = last_result_data["topic"]
                         elif "quote_text" in last_result_data:
                             config["content"] = last_result_data["quote_text"]
                         elif "optimized" in last_result_data:
                             config["content"] = last_result_data["optimized"]
+                        elif "text" in last_result_data:
+                            config["content"] = last_result_data["text"]
+                    
+                    # Inject topic if missing (for tools that need it)
+                    if "topic" not in config and "topic" in last_result_data:
+                        config["topic"] = last_result_data["topic"]
                 
                 # Update current step - Starting
                 logger.info(f"Job {job_id}: Starting step {current_step}/{total_steps}: {step_name}")
