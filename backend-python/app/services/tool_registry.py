@@ -358,11 +358,53 @@ Example format: #AI, #TechInnovation, #FutureOfWork"""
             # Extract parameters
             content_id = config.get('content_id')
             workspace_id = config.get('workspace_id')
+            all_content_ids = config.get('all_content_ids', [])
             
             if not content_id or not workspace_id:
                 raise ValueError("content_id and workspace_id are required")
             
-            # STEP 1: Validate content exists and is approved
+            # STEP 1: Fetch all content from the workflow to aggregate
+            # This allows combining caption + hashtags + image into one post
+            aggregated_content = {
+                'caption': None,
+                'hashtags': [],
+                'image_url': None,
+                'optimized': None,
+                'quote_text': None
+            }
+            
+            # Fetch all content pieces from the workflow
+            content_ids_to_fetch = all_content_ids if all_content_ids else [content_id]
+            for cid in content_ids_to_fetch:
+                content_response = supabase.table(CONTENT_TABLE)\
+                    .select("*")\
+                    .eq("id", cid)\
+                    .eq("workspace_id", workspace_id)\
+                    .is_("deleted_at", "null")\
+                    .execute()
+                
+                if content_response.data:
+                    content_item = content_response.data[0]
+                    content_data = content_item['data']
+                    content_type = content_item['content_type']
+                    
+                    # Handle nested structure
+                    if isinstance(content_data, dict) and 'result' in content_data and 'status' in content_data:
+                        content_data = content_data.get('result', content_data)
+                    
+                    # Extract different content types
+                    if content_type == 'caption' and content_data.get('caption'):
+                        aggregated_content['caption'] = content_data['caption']
+                    elif content_type == 'hashtags' and content_data.get('hashtags'):
+                        aggregated_content['hashtags'] = content_data['hashtags']
+                    elif content_type == 'image' and content_data.get('image_url'):
+                        aggregated_content['image_url'] = content_data['image_url']
+                        if not aggregated_content['quote_text'] and content_data.get('quote_text'):
+                            aggregated_content['quote_text'] = content_data['quote_text']
+                    elif content_type == 'optimized_content' and content_data.get('optimized'):
+                        aggregated_content['optimized'] = content_data['optimized']
+            
+            # STEP 2: Validate primary content exists and is approved
             content_response = supabase.table(CONTENT_TABLE)\
                 .select("*")\
                 .eq("id", content_id)\
@@ -379,7 +421,7 @@ Example format: #AI, #TechInnovation, #FutureOfWork"""
             if content['status'] not in ['approved', 'draft']:
                 raise ValueError(f"Content must be approved or draft before posting. Current status: {content['status']}")
             
-            # STEP 2: Check if posting_job already exists and is posted
+            # STEP 3: Check if posting_job already exists and is posted
             existing_job_response = supabase.table(POSTING_JOBS_TABLE)\
                 .select("*")\
                 .eq("content_id", content_id)\
@@ -401,28 +443,47 @@ Example format: #AI, #TechInnovation, #FutureOfWork"""
                     }
                 }
             
-            # STEP 3: Prepare post text
-            content_data = content['data']
-            content_type = content['content_type']
+            # STEP 4: Build the final post text from aggregated content
+            # Priority: optimized > caption > quote_text
+            post_text = aggregated_content['optimized'] or aggregated_content['caption'] or aggregated_content['quote_text'] or ""
             
-            # Handle nested result structure (legacy data may have {"status": ..., "result": {...}})
-            if isinstance(content_data, dict) and 'result' in content_data and 'status' in content_data:
-                content_data = content_data.get('result', content_data)
-            
-            # Build post text based on content type
-            post_text = self._prepare_x_post_text(content_type, content_data, content.get('title'))
+            if not post_text:
+                # Fallback to extracting from primary content
+                content_data = content['data']
+                content_type = content['content_type']
+                if isinstance(content_data, dict) and 'result' in content_data and 'status' in content_data:
+                    content_data = content_data.get('result', content_data)
+                post_text = self._prepare_x_post_text(content_type, content_data, content.get('title'))
             
             if not post_text:
                 raise ValueError("Could not extract post text from content")
             
-            # Truncate if over 280 characters
+            # Add hashtags if available
+            if aggregated_content['hashtags']:
+                hashtags = aggregated_content['hashtags']
+                if isinstance(hashtags, list):
+                    hashtag_text = " " + " ".join(hashtags)
+                    # Only add if it fits within 280 chars
+                    if len(post_text) + len(hashtag_text) <= 280:
+                        post_text += hashtag_text
+                    else:
+                        # Add as many hashtags as fit
+                        remaining = 280 - len(post_text) - 1
+                        for tag in hashtags:
+                            if len(" " + tag) <= remaining:
+                                post_text += " " + tag
+                                remaining -= len(" " + tag)
+                            else:
+                                break
+            
+            # Truncate if still over 280 characters
             if len(post_text) > 280:
                 post_text = post_text[:277] + "..."
             
-            # Get image URL if available
-            image_url = content_data.get('image_url') or content_data.get('cover_url') or content_data.get('url')
+            # Get image URL from aggregated content
+            image_url = aggregated_content['image_url']
             
-            # STEP 4: Post to X
+            # STEP 5: Post to X
             tweet_result = await self._post_tweet(post_text, image_url)
             
             if not tweet_result['success']:
@@ -449,7 +510,7 @@ Example format: #AI, #TechInnovation, #FutureOfWork"""
                 
                 raise ValueError(f"Failed to post to X: {tweet_result.get('error')}")
             
-            # STEP 5: Create successful posting job
+            # STEP 6: Create successful posting job
             now = datetime.utcnow().isoformat()
             posting_job_data = {
                 "workspace_id": workspace_id,

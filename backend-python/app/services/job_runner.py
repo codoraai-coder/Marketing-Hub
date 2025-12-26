@@ -64,6 +64,7 @@ class JobRunner:
             step_results = []
             last_content_id = None  # Track content_id from previous step
             last_result_data = None  # Track result data from previous step
+            all_content_ids = []  # Track all content IDs from all steps for aggregation
             
             for step_index, step in enumerate(steps):
                 current_step = step_index + 1
@@ -77,6 +78,10 @@ class JobRunner:
                     config["content_id"] = str(last_content_id)
                 if "workspace_id" not in config:
                     config["workspace_id"] = workflow["workspace_id"]
+                
+                # For post_to_x, pass all previous content IDs so it can aggregate
+                if tool_name == "post_to_x" and all_content_ids:
+                    config["all_content_ids"] = [str(cid) for cid in all_content_ids]
                 
                 # Pass content/topic from previous step if not already set
                 # This enables hashtag generator, caption generator, etc. to use previous output
@@ -130,6 +135,7 @@ class JobRunner:
                     # Track content_id and result data for next step
                     last_content_id = content_id
                     last_result_data = result.get("result", result) if isinstance(result, dict) else result
+                    all_content_ids.append(content_id)  # Track all IDs for aggregation
                     
                     # Log success
                     logger.info(f"Job {job_id}: Completed step {current_step}/{total_steps}: {step_name}, content_id: {content_id}")
