@@ -1,20 +1,6 @@
 from enum import Enum
 
 
-class ContentType(str, Enum):
-    BLOG = "blog"
-    IMAGE = "image"
-    CAPTION = "caption"
-    DOC = "doc"
-
-
-class ContentStatus(str, Enum):
-    DRAFT = "draft"
-    APPROVED = "approved"
-    USED = "used"
-    POSTED = "posted"
-
-
 class JobStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -26,11 +12,26 @@ class SocialPlatform(str, Enum):
     LINKEDIN = "linkedin"
 
 
+class ContentType(str, Enum):
+    BLOG_POST = "blog_post"
+    IMAGE = "image"
+    CAPTION = "caption"
+    HASHTAGS = "hashtags"
+    OPTIMIZED_CONTENT = "optimized_content"
+
+
+class ContentStatus(str, Enum):
+    DRAFT = "draft"
+    APPROVED = "approved"
+    USED = "used"
+    POSTED = "posted"
+
+
 # Table names (for Supabase queries)
 USERS_TABLE = "users"
 WORKSPACES_TABLE = "workspaces"
-CONTENTS_TABLE = "contents"
 WORKFLOWS_TABLE = "workflows"
 JOBS_TABLE = "jobs"
 SOCIAL_ACCOUNTS_TABLE = "social_accounts"
 ANALYTICS_TABLE = "analytics"
+CONTENT_TABLE = "content"

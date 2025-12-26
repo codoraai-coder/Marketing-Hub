@@ -52,9 +52,19 @@ backend-python/
 ## Features
 
 - ✅ RESTful API with FastAPI
-- ✅ PostgreSQL database with SQLAlchemy ORM
-- ✅ Supabase integration
+- ✅ PostgreSQL database with Supabase
+- ✅ Workflow orchestration system (MCP)
+- ✅ Job execution with background tasks
+- ✅ Content layer with approval workflows
+- ✅ AI-powered content generation (Gemini)
+- ✅ External API integration
 - ✅ AWS S3 storage support
 - ✅ Automatic API documentation (Swagger UI at `/docs`)
 - ✅ Pydantic data validation
 - ✅ CORS enabled
+
+## Documentation
+
+- 📖 [Workflow APIs Guide](./README_WORKFLOW_APIS.md) - Complete workflow and job execution documentation
+- 📖 [Content Layer Guide](./README_CONTENT_LAYER.md) - Content management and approval workflows
+- 📋 [Workflow API Checklist](./WORKFLOW_API_CHECKLIST.md) - Implementation checklist

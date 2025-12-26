@@ -13,7 +13,11 @@ router = APIRouter()
 @router.post("/", response_model=WorkspaceResponse)
 async def create_workspace(workspace: CreateWorkspaceDto, supabase: Client = Depends(get_supabase)):
     """Create a new workspace"""
-    result = supabase.table(WORKSPACES_TABLE).insert(workspace.model_dump()).execute()
+    workspace_data = {
+        "owner_user_id": str(workspace.owner_user_id),
+        "name": workspace.name
+    }
+    result = supabase.table(WORKSPACES_TABLE).insert(workspace_data).execute()
     if not result.data:
         raise HTTPException(status_code=400, detail="Failed to create workspace")
     return result.data[0]
