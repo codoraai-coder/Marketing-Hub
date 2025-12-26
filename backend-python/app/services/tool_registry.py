@@ -8,9 +8,11 @@ from typing import Dict, Any
 import logging
 import os
 import uuid
+import tempfile
 from datetime import datetime
 from io import BytesIO
 from docx import Document
+import tweepy
 
 logger = logging.getLogger(__name__)
 
@@ -338,22 +340,15 @@ Example format: #AI, #TechInnovation, #FutureOfWork"""
     
     async def _execute_post_to_x(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Prepare content for X (Twitter) posting (MCP tool - does NOT post directly)
+        Post content directly to X (Twitter) using the API
         
         This tool:
         1. Validates that content exists and is approved
-        2. Prepares the final posting payload
-        3. Creates a posting_job record with status='ready'
-        4. Returns the job_id and prepared payload
-        
-        It does NOT:
-        - Call X API
-        - Perform browser automation
-        - Schedule posts
-        
-        The user must manually post using the prepared payload.
+        2. Posts the content to X using Tweepy
+        3. Creates a posting_job record with status='posted'
+        4. Returns the tweet URL and job details
         """
-        logger.info(f"Preparing X post with config: {config}")
+        logger.info(f"Posting to X with config: {config}")
         
         try:
             # Import database and models
@@ -380,31 +375,33 @@ Example format: #AI, #TechInnovation, #FutureOfWork"""
             
             content = content_response.data[0]
             
-            if content['status'] != 'approved':
-                raise ValueError(f"Content must be approved before posting. Current status: {content['status']}")
+            # Allow both approved and draft content for posting
+            if content['status'] not in ['approved', 'draft']:
+                raise ValueError(f"Content must be approved or draft before posting. Current status: {content['status']}")
             
-            # STEP 2: Check if posting_job already exists for this content
+            # STEP 2: Check if posting_job already exists and is posted
             existing_job_response = supabase.table(POSTING_JOBS_TABLE)\
                 .select("*")\
                 .eq("content_id", content_id)\
+                .eq("status", "posted")\
                 .execute()
             
             if existing_job_response.data:
                 existing_job = existing_job_response.data[0]
-                logger.info(f"Posting job already exists: {existing_job['id']}")
+                logger.info(f"Content already posted: {existing_job['id']}")
                 return {
                     "status": "success",
                     "tool": "post_to_x",
                     "result": {
                         "job_id": existing_job['id'],
                         "content_id": content_id,
-                        "status": existing_job['status'],
-                        "prepared_payload": existing_job['prepared_payload'],
-                        "message": "Posting job already exists"
+                        "status": "posted",
+                        "tweet_url": existing_job['prepared_payload'].get('tweet_url'),
+                        "message": "Content already posted to X"
                     }
                 }
             
-            # STEP 3: Prepare final payload
+            # STEP 3: Prepare post text
             content_data = content['data']
             content_type = content['content_type']
             
@@ -412,51 +409,63 @@ Example format: #AI, #TechInnovation, #FutureOfWork"""
             if isinstance(content_data, dict) and 'result' in content_data and 'status' in content_data:
                 content_data = content_data.get('result', content_data)
             
-            # Build payload based on content type
-            prepared_payload = {
-                "content_id": content_id,
-                "platform": "x",
-                "created_at": datetime.utcnow().isoformat()
-            }
+            # Build post text based on content type
+            post_text = self._prepare_x_post_text(content_type, content_data, content.get('title'))
             
-            if content_type == 'caption':
-                prepared_payload['post_text'] = content_data.get('caption', '')
-            elif content_type == 'optimized_content':
-                prepared_payload['post_text'] = content_data.get('optimized', content_data.get('content', ''))
-            elif content_type == 'blog_post':
-                # For blog posts, create a teaser
-                title = content.get('title', 'New Blog Post')
-                docx_url = content_data.get('docx_url', '')
-                prepared_payload['post_text'] = f"📝 {title}\n\nRead the full article: {docx_url}"
-            else:
-                # Generic fallback - try multiple keys
-                prepared_payload['post_text'] = str(content_data.get('caption', content_data.get('text', content_data.get('content', ''))))
+            if not post_text:
+                raise ValueError("Could not extract post text from content")
             
-            # Add hashtags if available
-            if content_type == 'hashtags':
-                prepared_payload['hashtags'] = content_data.get('hashtags', [])
+            # Truncate if over 280 characters
+            if len(post_text) > 280:
+                post_text = post_text[:277] + "..."
             
-            # Add image URL if available
-            if 'image_url' in content_data:
-                prepared_payload['image_url'] = content_data['image_url']
-            if 'cover_url' in content_data:
-                prepared_payload['image_url'] = content_data['cover_url']
+            # Get image URL if available
+            image_url = content_data.get('image_url') or content_data.get('cover_url') or content_data.get('url')
             
-            # X-specific formatting hints (280 char limit for tweets)
-            prepared_payload['formatting_hints'] = {
-                "max_length": 280,
-                "supports_markdown": False,
-                "supports_images": True,
-                "supports_videos": True
-            }
+            # STEP 4: Post to X
+            tweet_result = await self._post_tweet(post_text, image_url)
             
-            # STEP 4: Create posting_job record
+            if not tweet_result['success']:
+                # Create failed posting job
+                posting_job_data = {
+                    "workspace_id": workspace_id,
+                    "content_id": content_id,
+                    "platform": "x",
+                    "status": "failed",
+                    "prepared_payload": {
+                        "content_id": content_id,
+                        "platform": "x",
+                        "post_text": post_text,
+                        "image_url": image_url,
+                        "error": tweet_result.get('error')
+                    },
+                    "error_message": tweet_result.get('error', 'Failed to post to X'),
+                    "retry_count": 0
+                }
+                
+                job_response = supabase.table(POSTING_JOBS_TABLE)\
+                    .insert(posting_job_data)\
+                    .execute()
+                
+                raise ValueError(f"Failed to post to X: {tweet_result.get('error')}")
+            
+            # STEP 5: Create successful posting job
+            now = datetime.utcnow().isoformat()
             posting_job_data = {
                 "workspace_id": workspace_id,
                 "content_id": content_id,
                 "platform": "x",
-                "status": "ready",
-                "prepared_payload": prepared_payload,
+                "status": "posted",
+                "prepared_payload": {
+                    "content_id": content_id,
+                    "platform": "x",
+                    "post_text": post_text,
+                    "image_url": image_url,
+                    "tweet_id": tweet_result.get('tweet_id'),
+                    "tweet_url": tweet_result.get('tweet_url'),
+                    "created_at": now
+                },
+                "posted_at": now,
                 "retry_count": 0
             }
             
@@ -465,27 +474,169 @@ Example format: #AI, #TechInnovation, #FutureOfWork"""
                 .execute()
             
             if not job_response.data:
-                raise ValueError("Failed to create posting job")
+                raise ValueError("Failed to create posting job record")
             
             created_job = job_response.data[0]
-            logger.info(f"Created posting job: {created_job['id']}")
             
-            # STEP 5: Return success response
+            # STEP 6: Update content status to posted
+            supabase.table(CONTENT_TABLE)\
+                .update({
+                    "status": "posted",
+                    "posted_at": now
+                })\
+                .eq("id", content_id)\
+                .execute()
+            
+            logger.info(f"Successfully posted to X! Tweet: {tweet_result.get('tweet_url')}")
+            
             return {
                 "status": "success",
                 "tool": "post_to_x",
                 "result": {
                     "job_id": created_job['id'],
                     "content_id": content_id,
-                    "status": "ready",
-                    "prepared_payload": prepared_payload,
-                    "message": "Content prepared for X posting. User must manually post."
+                    "status": "posted",
+                    "tweet_id": tweet_result.get('tweet_id'),
+                    "tweet_url": tweet_result.get('tweet_url'),
+                    "post_text": post_text,
+                    "message": "Successfully posted to X!"
                 }
             }
             
         except Exception as e:
-            logger.error(f"X posting preparation failed: {str(e)}")
+            logger.error(f"X posting failed: {str(e)}")
             raise
+    
+    def _prepare_x_post_text(self, content_type: str, content_data: Dict[str, Any], title: str = None) -> str:
+        """Extract and prepare post text from content"""
+        if isinstance(content_data, str):
+            return content_data
+        
+        if not isinstance(content_data, dict):
+            return ""
+        
+        # Try different fields based on content type
+        if content_type == 'caption':
+            return content_data.get('caption', '') or content_data.get('text', '')
+        
+        if content_type == 'blog_post':
+            # For blog posts, create a teaser
+            blog_title = title or content_data.get('title', 'New Blog Post')
+            docx_url = content_data.get('docx_url', '')
+            return f"📝 {blog_title}\n\nRead the full article: {docx_url}"
+        
+        if content_type == 'hashtags':
+            hashtags = content_data.get('hashtags', [])
+            if isinstance(hashtags, list):
+                return " ".join(hashtags)
+            return str(hashtags)
+        
+        if content_type == 'optimized_content':
+            return content_data.get('optimized', content_data.get('content', ''))
+        
+        if content_type == 'image':
+            # For images, use quote_text or generate a simple caption
+            return content_data.get('quote_text', '') or content_data.get('caption', '') or '✨ Check this out!'
+        
+        # Fallback: try common fields
+        for field in ['caption', 'text', 'content', 'message', 'post_text', 'quote_text']:
+            if content_data.get(field):
+                return str(content_data[field])
+        
+        return ""
+    
+    async def _post_tweet(self, text: str, image_url: str = None) -> Dict[str, Any]:
+        """
+        Post a tweet to X using Tweepy
+        """
+        try:
+            # Get X API credentials
+            api_key = os.getenv("X_API_KEY")
+            api_secret = os.getenv("X_API_SECRET")
+            access_token = os.getenv("X_ACCESS_TOKEN")
+            access_token_secret = os.getenv("X_ACCESS_TOKEN_SECRET")
+            
+            if not all([api_key, api_secret, access_token, access_token_secret]):
+                return {
+                    "success": False,
+                    "error": "X API credentials not configured. Set X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET in .env"
+                }
+            
+            # Initialize Tweepy client (v2 API)
+            twitter_client = tweepy.Client(
+                consumer_key=api_key,
+                consumer_secret=api_secret,
+                access_token=access_token,
+                access_token_secret=access_token_secret
+            )
+            
+            media_ids = None
+            
+            # Handle image upload if provided
+            if image_url:
+                try:
+                    # Initialize v1.1 API for media upload (required for media)
+                    auth = tweepy.OAuth1UserHandler(
+                        api_key,
+                        api_secret,
+                        access_token,
+                        access_token_secret
+                    )
+                    api_v1 = tweepy.API(auth)
+                    
+                    # Download the image
+                    async with httpx.AsyncClient(timeout=60.0) as http_client:
+                        response = await http_client.get(image_url)
+                        if response.status_code == 200:
+                            # Save to temp file
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                                tmp.write(response.content)
+                                tmp_path = tmp.name
+                            
+                            # Upload media
+                            media = api_v1.media_upload(filename=tmp_path)
+                            media_ids = [media.media_id]
+                            
+                            # Cleanup temp file
+                            os.unlink(tmp_path)
+                            logger.info(f"Image uploaded to X: {media.media_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to upload image to X: {e}. Posting without image.")
+                    media_ids = None
+            
+            # Post the tweet
+            if media_ids:
+                response = twitter_client.create_tweet(text=text, media_ids=media_ids)
+            else:
+                response = twitter_client.create_tweet(text=text)
+            
+            tweet_id = response.data["id"]
+            
+            # Get username for tweet URL
+            me = twitter_client.get_me()
+            username = me.data.username if me.data else "user"
+            tweet_url = f"https://x.com/{username}/status/{tweet_id}"
+            
+            logger.info(f"Tweet posted successfully: {tweet_url}")
+            
+            return {
+                "success": True,
+                "tweet_id": tweet_id,
+                "tweet_url": tweet_url
+            }
+            
+        except tweepy.TweepyException as e:
+            logger.error(f"Tweepy error: {e}")
+            return {
+                "success": False,
+                "error": f"X API error: {str(e)}"
+            }
+        except Exception as e:
+            logger.error(f"Error posting tweet: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
     
     def is_tool_available(self, tool_name: str) -> bool:
         """Check if a tool is registered"""
